@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "feishu": {
+      "command": "bun",
+      "args": ["run", "--cwd", "/Users/openclaw/Projects/feishuchannel", "--shell=bun", "--silent", "start"]
+    }
+  }
+}
