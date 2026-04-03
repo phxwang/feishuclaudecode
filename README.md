@@ -1,8 +1,8 @@
 # Feishu Channel for Claude Code
 
-A [Claude Code](https://docs.anthropic.com/en/docs/claude-code) channel plugin that bridges [Feishu (Lark)](https://www.feishu.cn/) messaging with Claude Code. Send messages to a Feishu bot and get responses from Claude — right in your chat.
+A [Feishu (Lark)](https://www.feishu.cn/) channel plugin for [Claude Code](https://docs.anthropic.com/en/docs/claude-code), built on Claude Code's **native [Channel interface](https://docs.anthropic.com/en/docs/claude-code/channels)**. Send messages to a Feishu bot and interact with Claude — right in your chat.
 
-Uses **WebSocket persistent connection** mode, so no public HTTPS endpoint is required.
+Uses the MCP Channel protocol to integrate Feishu as a first-class messaging channel for Claude Code, with **WebSocket persistent connection** mode requiring no public HTTPS endpoint.
 
 ## Features
 
