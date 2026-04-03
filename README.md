@@ -51,15 +51,17 @@ Uses the MCP Channel protocol to integrate Feishu as a first-class messaging cha
 
 ### 2. Install the Plugin
 
-```bash
-claude plugin add /path/to/feishuchannel
-```
-
-Or clone and add:
+Clone the repository:
 
 ```bash
 git clone git@github.com:phxwang/feishuclaudecode.git
-claude plugin add ./feishuclaudecode
+```
+
+Register the local directory as a plugin marketplace, then install the plugin:
+
+```bash
+claude plugin marketplace add ./feishuclaudecode
+claude plugin install feishu@feishu-local
 ```
 
 ### 3. Start Claude Code with the Feishu Channel
@@ -70,7 +72,7 @@ The Feishu channel is a development channel plugin. Launch Claude Code with:
 claude --dangerously-load-development-channels plugin:feishu@feishu-local
 ```
 
-> **Note:** The `--dangerously-load-development-channels` flag is required because this is a local development channel. The flag tells Claude Code to load the channel server.
+> **Note:** The `--dangerously-load-development-channels` flag is required because this is a local development channel plugin.
 
 ### 4. Configure Credentials
 
