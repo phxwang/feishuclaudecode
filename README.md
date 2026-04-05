@@ -160,8 +160,8 @@ Groups are off by default. The bot must be added to the group by a group admin f
 ### Delivery Settings
 
 ```bash
-# React to received messages with an emoji
-/feishu:access set ackReaction THUMBSUP
+# React to received messages with an emoji (default: Get)
+/feishu:access set ackReaction Get
 
 # Set max characters per message chunk
 /feishu:access set textChunkLimit 4096
