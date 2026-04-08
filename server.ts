@@ -10,12 +10,21 @@ import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprot
 import { z } from 'zod'
 import * as lark from '@larksuiteoapi/node-sdk'
 import { randomBytes } from 'crypto'
+import { execSync } from 'child_process'
 import {
   readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, rmSync,
   statSync, renameSync, realpathSync, chmodSync, createReadStream,
 } from 'fs'
 import { homedir } from 'os'
 import { join, sep, extname, basename } from 'path'
+
+function parentHasChannelArg(): boolean {
+  try {
+    const args = execSync(`ps -o args= -p ${process.ppid}`, { encoding: 'utf8' }).trim()
+    return /\bchannels?\b/.test(args)
+  } catch { return false }
+}
+const CHANNEL_MODE = parentHasChannelArg()
 
 const STATE_DIR = process.env.FEISHU_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'feishu')
 const ACCESS_FILE = join(STATE_DIR, 'access.json')
@@ -202,7 +211,7 @@ function checkApprovals() {
     })()
   }
 }
-if (!STATIC) setInterval(checkApprovals, 5000).unref()
+if (!STATIC && CHANNEL_MODE) setInterval(checkApprovals, 5000).unref()
 
 function chunkText(text: string, limit: number): string[] {
   if (text.length <= limit) return [text]
@@ -650,23 +659,29 @@ async function handleInbound(data: any) {
 }
 
 // Startup
-dbg('server starting')
-await fetchBotOpenId()
+dbg(`server starting (CHANNEL_MODE=${CHANNEL_MODE}, ppid=${process.ppid})`)
 
-const wsClient = new lark.WSClient({ appId: APP_ID, appSecret: APP_SECRET, loggerLevel: lark.LoggerLevel.warn })
-const dispatcher = new lark.EventDispatcher({ encryptKey: ENCRYPT_KEY }).register({
-  'im.message.receive_v1': async (data: any) => { dbg('im.message.receive_v1 fired'); return handleInbound(data).catch(e => process.stderr.write(`feishu: handleInbound failed: ${e}\n`)) },
-  'card.action.trigger': async (data: any) => { dbg('card.action.trigger fired'); return handleCardAction(data).catch(e => { process.stderr.write(`feishu: handleCardAction failed: ${e}\n`); return {} }) },
-})
+let wsClient: lark.WSClient | null = null
+
+if (CHANNEL_MODE) {
+  await fetchBotOpenId()
+  wsClient = new lark.WSClient({ appId: APP_ID, appSecret: APP_SECRET, loggerLevel: lark.LoggerLevel.warn })
+  const dispatcher = new lark.EventDispatcher({ encryptKey: ENCRYPT_KEY }).register({
+    'im.message.receive_v1': async (data: any) => { dbg('im.message.receive_v1 fired'); return handleInbound(data).catch(e => process.stderr.write(`feishu: handleInbound failed: ${e}\n`)) },
+    'card.action.trigger': async (data: any) => { dbg('card.action.trigger fired'); return handleCardAction(data).catch(e => { process.stderr.write(`feishu: handleCardAction failed: ${e}\n`); return {} }) },
+  })
+  wsClient.start({ eventDispatcher: dispatcher }).catch(e => process.stderr.write(`feishu: wsClient error: ${e}\n`))
+} else {
+  dbg('parent has no channel arg — skipping Feishu WebSocket connection')
+}
 
 const mcpPromise = mcp.connect(new StdioServerTransport())
-wsClient.start({ eventDispatcher: dispatcher }).catch(e => process.stderr.write(`feishu: wsClient error: ${e}\n`))
 
 let shuttingDown = false
 function shutdown() {
   if (shuttingDown) return; shuttingDown = true
   process.stderr.write('feishu channel: shutting down\n')
-  try { (wsClient as any).disconnect?.() } catch {}
+  try { (wsClient as any)?.disconnect?.() } catch {}
   setTimeout(() => process.exit(0), 2000)
 }
 process.stdin.on('end', shutdown)
