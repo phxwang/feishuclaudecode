@@ -18,13 +18,30 @@ import {
 import { homedir } from 'os'
 import { join, sep, extname, basename } from 'path'
 
-function parentHasChannelArg(): boolean {
+function ancestorHasChannelArg(): boolean {
   try {
-    const args = execSync(`ps -o args= -p ${process.ppid}`, { encoding: 'utf8' }).trim()
-    return /\bchannels?\b/.test(args)
-  } catch { return false }
+    // Walk up the process tree: server.ts → bun run → claude
+    const lines = execSync(
+      `ps -o pid=,ppid=,args= -ax`,
+      { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 },
+    ).trim().split('\n')
+    const byPid = new Map<number, { ppid: number; args: string }>()
+    for (const line of lines) {
+      const m = line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/)
+      if (m) byPid.set(Number(m[1]), { ppid: Number(m[2]), args: m[3] })
+    }
+    let pid = process.ppid
+    for (let depth = 0; depth < 5; depth++) {
+      const p = byPid.get(pid)
+      if (!p) break
+      if (/\bchannels?\b/.test(p.args)) return true
+      pid = p.ppid
+      if (pid <= 1) break
+    }
+  } catch {}
+  return false
 }
-const CHANNEL_MODE = parentHasChannelArg()
+const CHANNEL_MODE = ancestorHasChannelArg()
 
 const STATE_DIR = process.env.FEISHU_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'feishu')
 const ACCESS_FILE = join(STATE_DIR, 'access.json')
