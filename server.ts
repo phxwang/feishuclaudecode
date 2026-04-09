@@ -19,9 +19,10 @@ import {
 import { homedir } from 'os'
 import { join, sep, extname, basename } from 'path'
 
-function ancestorHasChannelArg(): boolean {
+/** Walk up the process tree to find the Claude ancestor with --channels feishu.
+ *  Returns its PID (or 0 if not found). */
+function findChannelAncestorPid(): number {
   try {
-    // Walk up the process tree: server.ts → bun run → claude
     const lines = execSync(
       `ps -o pid=,ppid=,args= -ax`,
       { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 },
@@ -35,14 +36,32 @@ function ancestorHasChannelArg(): boolean {
     for (let depth = 0; depth < 5; depth++) {
       const p = byPid.get(pid)
       if (!p) break
-      if (/\bchannels?\b/.test(p.args) && /\bfeishu\b/.test(p.args)) return true
+      if (/\bchannels?\b/.test(p.args) && /\bfeishu\b/.test(p.args)) return pid
       pid = p.ppid
       if (pid <= 1) break
     }
   } catch {}
-  return false
+  return 0
 }
-const CHANNEL_MODE = ancestorHasChannelArg()
+
+/** Get the cwd of a process by PID (macOS: lsof, Linux: /proc). */
+function getProcessCwd(pid: number): string | undefined {
+  try {
+    // macOS
+    const out = execSync(`lsof -a -p ${pid} -d cwd -Fn 2>/dev/null`, { encoding: 'utf8' })
+    const m = out.match(/^n(.+)$/m)
+    if (m) return m[1]
+  } catch {}
+  try {
+    // Linux fallback
+    return readFileSync(`/proc/${pid}/cwd`, 'utf8')
+  } catch {}
+  return undefined
+}
+
+const CHANNEL_ANCESTOR_PID = findChannelAncestorPid()
+const CHANNEL_MODE = CHANNEL_ANCESTOR_PID > 0
+const CLAUDE_WORKDIR = CHANNEL_MODE ? getProcessCwd(CHANNEL_ANCESTOR_PID) : undefined
 
 const STATE_DIR = process.env.FEISHU_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'feishu')
 const ROUTER_SOCK = join(STATE_DIR, 'router.sock')
@@ -679,7 +698,7 @@ async function handleInbound(data: any) {
 }
 
 // Startup
-dbg(`server starting (CHANNEL_MODE=${CHANNEL_MODE}, WORKER_MODE=${WORKER_MODE}, ppid=${process.ppid})`)
+dbg(`server starting (CHANNEL_MODE=${CHANNEL_MODE}, WORKER_MODE=${WORKER_MODE}, ppid=${process.ppid}, workdir=${CLAUDE_WORKDIR ?? process.cwd()})`)
 
 let wsClient: lark.WSClient | null = null
 
@@ -689,7 +708,7 @@ if (WORKER_MODE) {
   let sockBuf = ''
   const sock = netConnect(ROUTER_SOCK, () => {
     dbg('worker: connected to router')
-    sock.write(JSON.stringify({ type: 'register', workdir: process.cwd() }) + '\n')
+    sock.write(JSON.stringify({ type: 'register', workdir: CLAUDE_WORKDIR ?? process.cwd() }) + '\n')
   })
   sock.on('data', (chunk) => {
     sockBuf += chunk.toString()

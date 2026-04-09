@@ -1,0 +1,2 @@
+#!/bin/bash
+exec claude --dangerously-load-development-channels plugin:feishu@feishu-local "$@"
