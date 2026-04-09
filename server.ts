@@ -10,7 +10,7 @@ import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprot
 import { z } from 'zod'
 import * as lark from '@larksuiteoapi/node-sdk'
 import { randomBytes } from 'crypto'
-import { execSync } from 'child_process'
+import { execSync, spawn } from 'child_process'
 import { connect as netConnect } from 'net'
 import {
   readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, rmSync,
@@ -65,7 +65,35 @@ const CLAUDE_WORKDIR = CHANNEL_MODE ? getProcessCwd(CHANNEL_ANCESTOR_PID) : unde
 
 const STATE_DIR = process.env.FEISHU_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'feishu')
 const ROUTER_SOCK = join(STATE_DIR, 'router.sock')
-const WORKER_MODE = CHANNEL_MODE && existsSync(ROUTER_SOCK)
+const PLUGIN_DIR = import.meta.dir  // plugin cache directory containing router.ts
+
+/** Spawn router as detached background process if not already running. */
+function ensureRouter(): boolean {
+  if (existsSync(ROUTER_SOCK)) return true
+  const routerScript = join(PLUGIN_DIR, 'router.ts')
+  if (!existsSync(routerScript)) { dbg(`router.ts not found at ${routerScript}`); return false }
+  dbg(`spawning router: bun ${routerScript}`)
+  const child = spawn('bun', [routerScript], {
+    detached: true,
+    stdio: 'ignore',
+    env: { ...process.env },
+  })
+  child.unref()
+  dbg(`router spawned (pid=${child.pid})`)
+  return true
+}
+
+/** Wait for router.sock to appear, up to timeoutMs. */
+async function waitForSocket(timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (existsSync(ROUTER_SOCK)) return true
+    await new Promise(r => setTimeout(r, 200))
+  }
+  return false
+}
+
+let WORKER_MODE = CHANNEL_MODE && existsSync(ROUTER_SOCK)
 const ACCESS_FILE = join(STATE_DIR, 'access.json')
 const APPROVED_DIR = join(STATE_DIR, 'approved')
 const ENV_FILE = join(STATE_DIR, '.env')
@@ -697,13 +725,20 @@ async function handleInbound(data: any) {
   }).then(() => dbg('notification sent ok')).catch(e => dbg(`deliver failed: ${e}`))
 }
 
-// Startup
+// Startup — auto-launch router if needed
+if (CHANNEL_MODE && !WORKER_MODE) {
+  if (ensureRouter()) {
+    const ok = await waitForSocket(5000)
+    if (ok) { WORKER_MODE = true; dbg('router auto-started, switching to worker mode') }
+    else dbg('router socket did not appear in time, falling back to direct WebSocket')
+  }
+}
+
 dbg(`server starting (CHANNEL_MODE=${CHANNEL_MODE}, WORKER_MODE=${WORKER_MODE}, ppid=${process.ppid}, workdir=${CLAUDE_WORKDIR ?? process.cwd()})`)
 
 let wsClient: lark.WSClient | null = null
 
-if (WORKER_MODE) {
-  // Worker mode: connect to router via Unix socket, receive messages
+function connectWorker() {
   dbg(`worker mode: connecting to ${ROUTER_SOCK}`)
   let sockBuf = ''
   const sock = netConnect(ROUTER_SOCK, () => {
@@ -734,6 +769,10 @@ if (WORKER_MODE) {
   })
   sock.on('error', (e) => dbg(`worker: socket error: ${e}`))
   sock.on('close', () => dbg('worker: router disconnected'))
+}
+
+if (WORKER_MODE) {
+  connectWorker()
 } else if (CHANNEL_MODE) {
   await fetchBotOpenId()
   wsClient = new lark.WSClient({ appId: APP_ID, appSecret: APP_SECRET, loggerLevel: lark.LoggerLevel.warn })

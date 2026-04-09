@@ -143,26 +143,21 @@ Add `workdir` to each group in `~/.claude/channels/feishu/access.json`:
 }
 ```
 
-### 2. Start the Router
-
-```bash
-cd /path/to/feishuchannel
-bun run router
-```
-
-### 3. Start Claude Code Instances
+### 2. Start Claude Code Instances
 
 In separate terminals, start Claude in each project directory:
 
 ```bash
 cd /path/to/project-a
-claude --dangerously-load-development-channels plugin:feishu@feishu-local
+claude-feishu
 
 cd /path/to/project-b
-claude --dangerously-load-development-channels plugin:feishu@feishu-local
+claude-feishu
 ```
 
-Each Claude's feishu plugin auto-detects the router socket and connects, registering its `cwd`. The router matches incoming messages by `chat_id → workdir → connected worker`.
+The **first** Claude instance automatically spawns the router as a background process. Subsequent instances detect the router socket and connect as workers. The router matches incoming messages by `chat_id → workdir → connected worker`.
+
+> **Manual router start** (optional): If you prefer to manage the router yourself, run `bun run router` in the plugin directory before starting any Claude instances.
 
 ### 4. Check Status
 
