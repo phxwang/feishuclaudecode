@@ -13,7 +13,7 @@ import { randomBytes } from 'crypto'
 import { execSync } from 'child_process'
 import {
   readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, rmSync,
-  statSync, renameSync, realpathSync, chmodSync, createReadStream,
+  statSync, renameSync, realpathSync, chmodSync, createReadStream, watch,
 } from 'fs'
 import { homedir } from 'os'
 import { join, sep, extname, basename } from 'path'
@@ -42,6 +42,8 @@ function ancestorHasChannelArg(): boolean {
   return false
 }
 const CHANNEL_MODE = ancestorHasChannelArg()
+const WORKER_CHAT_ID = process.env.FEISHU_CHAT_ID ?? ''
+const WORKER_MODE = !!WORKER_CHAT_ID
 
 const STATE_DIR = process.env.FEISHU_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'feishu')
 const ACCESS_FILE = join(STATE_DIR, 'access.json')
@@ -228,7 +230,7 @@ function checkApprovals() {
     })()
   }
 }
-if (!STATIC && CHANNEL_MODE) setInterval(checkApprovals, 5000).unref()
+if (!STATIC && (CHANNEL_MODE || WORKER_MODE)) setInterval(checkApprovals, 5000).unref()
 
 function chunkText(text: string, limit: number): string[] {
   if (text.length <= limit) return [text]
@@ -676,11 +678,42 @@ async function handleInbound(data: any) {
 }
 
 // Startup
-dbg(`server starting (CHANNEL_MODE=${CHANNEL_MODE}, ppid=${process.ppid})`)
+dbg(`server starting (CHANNEL_MODE=${CHANNEL_MODE}, WORKER_MODE=${WORKER_MODE}, ppid=${process.ppid})`)
 
 let wsClient: lark.WSClient | null = null
 
-if (CHANNEL_MODE) {
+if (WORKER_MODE) {
+  // Worker mode: read messages from router inbox, not from WebSocket
+  const routerInbox = join(STATE_DIR, 'router', WORKER_CHAT_ID)
+  mkdirSync(routerInbox, { recursive: true })
+  dbg(`worker mode: watching ${routerInbox}`)
+
+  const processInbox = async () => {
+    let files: string[]
+    try { files = readdirSync(routerInbox).filter(f => f.endsWith('.json')).sort() } catch { return }
+    for (const f of files) {
+      const fp = join(routerInbox, f)
+      try {
+        const data = JSON.parse(readFileSync(fp, 'utf8'))
+        rmSync(fp, { force: true })
+        if (data.type === 'channel_message') {
+          dbg(`worker: delivering message from ${data.meta?.user}`)
+          await mcp.notification({ method: 'notifications/claude/channel', params: { content: data.content, meta: data.meta } })
+        } else if (data.type === 'permission_response') {
+          dbg(`worker: permission ${data.behavior} for ${data.request_id}`)
+          await mcp.notification({ method: 'notifications/claude/channel/permission', params: { request_id: data.request_id, behavior: data.behavior } })
+        } else if (data.type === 'confirm_response') {
+          dbg(`worker: confirm ${data.content}`)
+          await mcp.notification({ method: 'notifications/claude/channel', params: { content: data.content, meta: data.meta } })
+        }
+      } catch (e) { dbg(`worker: failed to process ${f}: ${e}`); rmSync(fp, { force: true }) }
+    }
+  }
+
+  watch(routerInbox, () => { processInbox().catch(e => dbg(`worker inbox error: ${e}`)) })
+  setInterval(() => { processInbox().catch(e => dbg(`worker poll error: ${e}`)) }, 2000).unref()
+  processInbox().catch(() => {})
+} else if (CHANNEL_MODE) {
   await fetchBotOpenId()
   wsClient = new lark.WSClient({ appId: APP_ID, appSecret: APP_SECRET, loggerLevel: lark.LoggerLevel.warn })
   const dispatcher = new lark.EventDispatcher({ encryptKey: ENCRYPT_KEY }).register({
@@ -689,7 +722,7 @@ if (CHANNEL_MODE) {
   })
   wsClient.start({ eventDispatcher: dispatcher }).catch(e => process.stderr.write(`feishu: wsClient error: ${e}\n`))
 } else {
-  dbg('parent has no channel arg — skipping Feishu WebSocket connection')
+  dbg('passive mode — no WebSocket, no worker inbox')
 }
 
 const mcpPromise = mcp.connect(new StdioServerTransport())

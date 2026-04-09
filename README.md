@@ -102,6 +102,57 @@ Credentials are stored in `~/.claude/channels/feishu/.env` (mode 600).
 
 You're ready — send messages to the bot and Claude will respond.
 
+## Multi-Group Router
+
+For multiple Feishu groups that each need an isolated Claude Code instance, use the **router**. It maintains a single Feishu WebSocket connection and spawns a dedicated Claude process per group.
+
+### 1. Configure Group Workdirs
+
+Add `workdir` to each group in `~/.claude/channels/feishu/access.json`:
+
+```jsonc
+{
+  "groups": {
+    "oc_groupA": {
+      "requireMention": true,
+      "allowFrom": [],
+      "workdir": "/path/to/project-a"
+    },
+    "oc_groupB": {
+      "requireMention": true,
+      "allowFrom": [],
+      "workdir": "/path/to/project-b"
+    }
+  },
+  "defaultWorkdir": "/path/to/default-project"  // for DMs
+}
+```
+
+### 2. Start the Router
+
+```bash
+cd /path/to/feishuchannel
+bun run router
+```
+
+The router will:
+- Connect to Feishu WebSocket (single connection)
+- Spawn a Claude instance per group on first message
+- Route messages to the correct instance by `chat_id`
+- Recycle idle instances after 30 minutes (configurable via `idleTimeout` per group)
+
+### 3. Check Status
+
+Send `SIGUSR1` to the router process to dump instance status:
+
+```bash
+kill -USR1 $(pgrep -f 'bun router.ts')
+```
+
+Check `~/.claude/channels/feishu/router-debug.log` for router logs.
+
+> **Note:** When using the router, do NOT start Claude with `--dangerously-load-development-channels` separately — the router handles spawning.
+
 ## Access Management
 
 All access commands are run in your Claude Code terminal via `/feishu:access`.
@@ -180,8 +231,11 @@ Groups are off by default. The bot must be added to the group by a group admin f
 ├── .env              # App credentials (FEISHU_APP_ID, FEISHU_APP_SECRET)
 ├── access.json       # Access control state (auto-managed)
 ├── approved/         # Pairing approval signals (transient)
-├── inbox/            # Confirm card responses (transient)
-└── debug.log         # Server debug log
+├── inbox/            # Downloaded attachments
+├── debug.log         # Server debug log
+├── router-debug.log  # Router debug log (when using router)
+└── router/           # Router message inboxes (when using router)
+    └── <chat_id>/    # Per-group message files
 ```
 
 ## Environment Variables
@@ -193,6 +247,7 @@ Groups are off by default. The bot must be added to the group by a group admin f
 | `FEISHU_ENCRYPT_KEY` | No | Event payload encryption key |
 | `FEISHU_ACCESS_MODE` | No | Set to `static` to disable pairing |
 | `FEISHU_STATE_DIR` | No | Override state directory path |
+| `FEISHU_CHAT_ID` | No | Set by router — puts server.ts in worker mode |
 
 ## How It Works
 
