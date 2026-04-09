@@ -129,7 +129,23 @@ function routeToWorkdir(workdir: string, payload: Record<string, unknown>): bool
   return true
 }
 
+/** Shut down router if no workers remain after a grace period. */
+let idleTimer: ReturnType<typeof setTimeout> | null = null
+const IDLE_GRACE_MS = 10_000  // wait 10s before shutting down
+
+function scheduleIdleShutdown() {
+  if (idleTimer) clearTimeout(idleTimer)
+  if (workers.size > 0) return
+  idleTimer = setTimeout(() => {
+    if (workers.size === 0) {
+      dbg('all workers disconnected, shutting down')
+      shutdown()
+    }
+  }, IDLE_GRACE_MS)
+}
+
 const sockServer = createServer((socket) => {
+  if (idleTimer) { clearTimeout(idleTimer); idleTimer = null }
   const w: Worker = { socket, workdir: '', buf: '' }
   workers.set(socket, w)
   dbg(`worker connected (${workers.size} total)`)
@@ -154,11 +170,13 @@ const sockServer = createServer((socket) => {
   socket.on('close', () => {
     workers.delete(socket)
     dbg(`worker disconnected: ${w.workdir} (${workers.size} remaining)`)
+    scheduleIdleShutdown()
   })
 
   socket.on('error', (e) => {
     dbg(`worker socket error: ${e}`)
     workers.delete(socket)
+    scheduleIdleShutdown()
   })
 })
 
