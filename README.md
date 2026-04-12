@@ -130,6 +130,8 @@ claude plugin install feishu@feishu-local
 claude-feishu
 ```
 
+On subsequent launches, `claude-feishu` automatically resumes the session named after the current directory (e.g., a session named `ccmyproject` is matched in the `myproject/` directory). If no matching session is found, an interactive session picker opens.
+
 Or use the full command:
 
 ```bash
