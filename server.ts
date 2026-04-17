@@ -614,6 +614,20 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
           const p = await downloadResource(msgId, cnt.file_key, 'file', cnt.file_name ?? 'file')
           return { content: [{ type: 'text', text: `downloaded:\n  ${p}  (${cnt.file_name ?? 'file'})` }] }
         }
+        if (msgType === 'post') {
+          const rows: any[] = Array.isArray((cnt as any).content) ? (cnt as any).content : []
+          const keys: string[] = []
+          for (const row of rows) {
+            if (!Array.isArray(row)) continue
+            for (const seg of row) if (seg?.tag === 'img' && seg.image_key) keys.push(seg.image_key)
+          }
+          if (!keys.length) return { content: [{ type: 'text', text: 'post message has no embedded images' }] }
+          const paths: string[] = []
+          for (let i = 0; i < keys.length; i++) {
+            paths.push(await downloadResource(msgId, keys[i]!, 'image', `post-image-${i + 1}.png`))
+          }
+          return { content: [{ type: 'text', text: `downloaded:\n  ${paths.join('\n  ')}` }] }
+        }
         return { content: [{ type: 'text', text: `message type '${msgType}' has no downloadable attachment` }] }
       }
       case 'fetch_messages': {
